@@ -1,0 +1,168 @@
+/*
+ *Jared Migneco
+ *Project 3
+ *Hauschild - 4760
+ *10-25-22
+ *Oss/Parent Class
+ *
+ *takes project 2 atttempt and tries to make it work
+ *
+ */
+#include <unistd.h>
+#include <sys/types.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <sys/shm.h>
+#include <sys/ipc.h>
+
+//shared memory
+#define SHMKEY  960158     /* Parent and child agree on common key.*/
+#define BUFF_SZ sizeof ( int )
+
+
+//from textbook, code for periodic asterisk
+/* ARGSUSED */
+static void myhandler(int s) {
+ char aster = '*';
+ int errsave;
+ errsave = errno;
+ write(STDERR_FILENO, &aster, 1);
+ errno = errsave;
+}
+static int setupinterrupt(void) { /* set up myhandler for SIGPROF */
+ struct sigaction act;
+ act.sa_handler = myhandler;
+ act.sa_flags = 0;
+ return (sigemptyset(&act.sa_mask) || sigaction(SIGPROF, &act, NULL));
+}
+static int setupitimer(void) { /* set ITIMER_PROF for 2-second intervals */
+ struct itimerval value;
+ value.it_interval.tv_sec = 2;
+ value.it_interval.tv_usec = 0;
+ value.it_value = value.it_interval;
+ return (setitimer(ITIMER_PROF, &value, NULL));
+}
+
+//using form provided OS_tutorial
+void print_usage ( const char * app )
+{
+    fprintf (stderr, "usage: %s [-h] [-n maxChildren] [-s existChildren] [-m increment]\n",app);
+    fprintf (stderr, "    maxChildrem is max of children created total\n");
+    fprintf (stderr, "    existChildren is max children at one time\n");
+    fprintf (stderr, "    increment is the amount children increment clock \n\n");
+}
+
+
+int main(int argc, char** argv)
+{
+        if (setupinterrupt() == -1) {
+                perror("Failed to set up handler for SIGPROF");
+                return 1;
+        }
+        if (setupitimer() == -1) {
+                perror("Failed to set up the ITIMER_PROF interval timer");
+                return 1;
+        }
+        //creating values for user input
+        int m = 1;      //how much clock is incremented
+        int s = 5;      //maximum number of children allowed to exist at once (max 18)
+        int n = 4;      //number of child processes created
+        //int b;
+        //int c; (here cause I think the joke is just funny enough)
+
+        /*/switch statement for handling user input
+        const char optstr[] = "hn:s:m";
+        char opt;
+        while ( ( opt = getopt ( argc, argv, optstr ) ) != -1 )
+        {
+                switch ( argc )
+                {
+                        case 'h':
+                                print_usage ( argv[0] );
+                                return ( EXIT_SUCCESS );
+                        case 'n':
+                                n = atoi(optarg);
+                                if(n > 18)
+                                {
+                                        printf("option n cannot be greater than 18, setting to 18");
+                                        n = 18;
+                                }
+                                break;
+                        case 's':
+                                s = atoi(optarg);
+                                /*I have this here as I was confused on the insructions and it feels like this is
+                                 *the value that can only have up to 18 processes at one time, but intstructions
+                                 *explicitly say n, so I set both to max 18
+                                 /
+                                if(s > 18)
+                                {
+                                        printf("option n cannot be greater than 18, setting to 18");
+                                        s = 18;
+                                }
+                                break;
+                        case 'm':
+                                m = atoi(optarg);
+                                break;
+                        default: /* '?' */
+                                /*printf ( "Invalid option %c\n", optopt );
+                                print_usage ( argv[0] );
+                                return ( EXIT_FAILURE );
+                }
+        }*/
+
+        //creating shared memory
+        int shmid = shmget ( SHMKEY, BUFF_SZ, 9045 | IPC_CREAT );
+
+        char *secClock = (char*) shmat(shmid,NULL, 0);
+        char *nanoClock = (char*) shmat(shmid,NULL, 0);
+
+        int *sharedClockSec = (int*) (secClock);
+        int *sharedClockNano = (int*) (nanoClock);
+
+        int i;
+        int j;
+        static char *workerArr[] = {"./worker", "5", NULL};
+
+        //for loop for up to n processes
+        for(i = 0; i < n; i++)
+        {
+                //looping for m processes at once in n, increase i count each time it forms
+                for(j = 0; j < m; j++)
+                {
+                        printf("\nWe boutta fork\n");
+
+                        pid_t childPid = fork(); // This is where the child process splits from the parent
+                        printf("\nwe just forked\n");
+
+                        if (childPid < 0)
+                        {
+                                perror("ERROR: something got a little forked up\n");
+                                exit(EXIT_FAILURE);
+                        }
+                        else if (childPid == 0)
+                        {
+                                //increments i to update total processes called so far
+                                i++;
+                                //calls child process
+                                execv(workerArr[0], workerArr);
+                                fprintf(stderr,"Exec failed, terminating\n");
+                                exit(1);
+                        }
+                        else
+                        {
+                                sleep(1);
+                                wait(0);
+                        }
+                }
+        }
+        printf("Parent is now ending.\n");
+
+        //freeing from shared memory
+        shmdt(sharedClockSec);
+        shmdt(sharedClockNano);
+        shmctl(shmid, IPC_RMID, NULL);
+        return EXIT_SUCCESS;
+}
